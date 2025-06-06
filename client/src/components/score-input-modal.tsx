@@ -29,11 +29,11 @@ export default function ScoreInputModal({ hole, onClose, onSave }: ScoreInputMod
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50">
-      <div className="max-w-sm mx-auto bg-white min-h-screen relative">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
+      <div className="max-w-sm mx-auto bg-white min-h-screen relative flex flex-col">
         
         {/* Modal Header */}
-        <div className="gradient-bg text-white px-6 py-8">
+        <div className="gradient-bg text-white px-6 py-8 flex-shrink-0">
           <div className="flex items-center justify-between">
             <Button
               onClick={onClose}
@@ -51,7 +51,7 @@ export default function ScoreInputModal({ hole, onClose, onSave }: ScoreInputMod
           </div>
         </div>
 
-        <div className="px-6 py-6 space-y-6">
+        <div className="px-6 py-6 space-y-6 flex-1 overflow-y-auto pb-20">
           
           {/* Score Input */}
           <div className="bg-white rounded-2xl card-shadow p-6">

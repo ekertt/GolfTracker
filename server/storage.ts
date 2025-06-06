@@ -86,6 +86,7 @@ export class MemStorage implements IStorage {
       isCompleted: false,
       currentHole: 1,
       date: new Date(),
+      totalPar: insertRound.totalPar || 72,
     };
     this.golfRounds.set(id, round);
 
@@ -98,7 +99,7 @@ export class MemStorage implements IStorage {
         roundId: id,
         holeNumber: i,
         par: standardPars[i - 1],
-        yardage: standardYardages[i - 1],
+        yardage: standardYardages[i - 1] || null,
         score: null,
         putts: null,
         fairwayInRegulation: null,
@@ -152,7 +153,18 @@ export class MemStorage implements IStorage {
 
   async createGolfHole(insertHole: InsertGolfHole): Promise<GolfHole> {
     const id = this.currentHoleId++;
-    const hole: GolfHole = { ...insertHole, id };
+    const hole: GolfHole = { 
+      id,
+      roundId: insertHole.roundId,
+      holeNumber: insertHole.holeNumber,
+      par: insertHole.par,
+      yardage: insertHole.yardage ?? null,
+      score: insertHole.score ?? null,
+      putts: insertHole.putts ?? null,
+      fairwayInRegulation: insertHole.fairwayInRegulation ?? null,
+      greenInRegulation: insertHole.greenInRegulation ?? null,
+      notes: insertHole.notes ?? null,
+    };
     this.golfHoles.set(id, hole);
     return hole;
   }
