@@ -12,8 +12,6 @@ import {
   type RoundWithHoles,
   type RoundStats
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -38,42 +36,67 @@ export interface IStorage {
   getActiveRound(userId: number): Promise<RoundWithHoles | undefined>;
 }
 
-export class DatabaseStorage implements IStorage {
+export class MemStorage implements IStorage {
+  private users: Map<number, User>;
+  private golfRounds: Map<number, GolfRound>;
+  private golfHoles: Map<number, GolfHole>;
+  private currentUserId: number;
+  private currentRoundId: number;
+  private currentHoleId: number;
+
+  constructor() {
+    this.users = new Map();
+    this.golfRounds = new Map();
+    this.golfHoles = new Map();
+    this.currentUserId = 1;
+    this.currentRoundId = 1;
+    this.currentHoleId = 1;
+    
+    // Create a default user
+    this.createUser({
+      username: "mike",
+      password: "password",
+      name: "Mike"
+    });
+  }
+
   async getUser(id: number): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user || undefined;
+    return this.users.get(id);
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user || undefined;
+    return Array.from(this.users.values()).find(
+      (user) => user.username === username,
+    );
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db
-      .insert(users)
-      .values(insertUser)
-      .returning();
+    const id = this.currentUserId++;
+    const user: User = { ...insertUser, id };
+    this.users.set(id, user);
     return user;
   }
 
   async createGolfRound(insertRound: InsertGolfRound): Promise<GolfRound> {
-    const [round] = await db
-      .insert(golfRounds)
-      .values({
-        ...insertRound,
-        totalPar: insertRound.totalPar || 72,
-      })
-      .returning();
+    const id = this.currentRoundId++;
+    const round: GolfRound = {
+      ...insertRound,
+      id,
+      totalScore: null,
+      isCompleted: false,
+      currentHole: 1,
+      date: new Date(),
+      totalPar: insertRound.totalPar || 72,
+    };
+    this.golfRounds.set(id, round);
 
     // Create 18 holes with default par values
     const standardPars = [4, 4, 3, 5, 4, 4, 3, 4, 5, 4, 3, 4, 4, 5, 3, 4, 4, 4];
     const standardYardages = [387, 425, 165, 520, 410, 380, 175, 390, 485, 395, 145, 400, 375, 515, 160, 420, 405, 385];
     
-    const holeInserts = [];
     for (let i = 1; i <= 18; i++) {
-      holeInserts.push({
-        roundId: round.id,
+      await this.createGolfHole({
+        roundId: id,
         holeNumber: i,
         par: standardPars[i - 1],
         yardage: standardYardages[i - 1] || null,
@@ -85,12 +108,11 @@ export class DatabaseStorage implements IStorage {
       });
     }
 
-    await db.insert(golfHoles).values(holeInserts);
     return round;
   }
 
   async getGolfRound(id: number): Promise<RoundWithHoles | undefined> {
-    const [round] = await db.select().from(golfRounds).where(eq(golfRounds.id, id));
+    const round = this.golfRounds.get(id);
     if (!round) return undefined;
 
     const holes = await this.getGolfHoles(id);
@@ -98,79 +120,81 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserGolfRounds(userId: number): Promise<RoundWithHoles[]> {
-    const userRounds = await db.select().from(golfRounds).where(eq(golfRounds.userId, userId));
-    
+    const userRounds = Array.from(this.golfRounds.values())
+      .filter(round => round.userId === userId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
     const roundsWithHoles: RoundWithHoles[] = [];
     for (const round of userRounds) {
       const holes = await this.getGolfHoles(round.id);
       roundsWithHoles.push({ ...round, holes });
     }
 
-    return roundsWithHoles.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return roundsWithHoles;
   }
 
   async updateGolfRound(id: number, updates: Partial<GolfRound>): Promise<GolfRound | undefined> {
-    const [updatedRound] = await db
-      .update(golfRounds)
-      .set(updates)
-      .where(eq(golfRounds.id, id))
-      .returning();
-    return updatedRound || undefined;
+    const round = this.golfRounds.get(id);
+    if (!round) return undefined;
+
+    const updatedRound = { ...round, ...updates };
+    this.golfRounds.set(id, updatedRound);
+    return updatedRound;
   }
 
   async deleteGolfRound(id: number): Promise<boolean> {
-    // Delete associated holes first
-    await db.delete(golfHoles).where(eq(golfHoles.roundId, id));
-    
-    // Delete the round
-    const result = await db.delete(golfRounds).where(eq(golfRounds.id, id));
-    return (result.rowCount || 0) > 0;
+    const deleted = this.golfRounds.delete(id);
+    // Also delete associated holes
+    Array.from(this.golfHoles.values())
+      .filter(hole => hole.roundId === id)
+      .forEach(hole => this.golfHoles.delete(hole.id));
+    return deleted;
   }
 
   async createGolfHole(insertHole: InsertGolfHole): Promise<GolfHole> {
-    const [hole] = await db
-      .insert(golfHoles)
-      .values({
-        ...insertHole,
-        yardage: insertHole.yardage ?? null,
-        score: insertHole.score ?? null,
-        putts: insertHole.putts ?? null,
-        fairwayInRegulation: insertHole.fairwayInRegulation ?? null,
-        greenInRegulation: insertHole.greenInRegulation ?? null,
-        notes: insertHole.notes ?? null,
-      })
-      .returning();
+    const id = this.currentHoleId++;
+    const hole: GolfHole = { 
+      id,
+      roundId: insertHole.roundId,
+      holeNumber: insertHole.holeNumber,
+      par: insertHole.par,
+      yardage: insertHole.yardage ?? null,
+      score: insertHole.score ?? null,
+      putts: insertHole.putts ?? null,
+      fairwayInRegulation: insertHole.fairwayInRegulation ?? null,
+      greenInRegulation: insertHole.greenInRegulation ?? null,
+      notes: insertHole.notes ?? null,
+    };
+    this.golfHoles.set(id, hole);
     return hole;
   }
 
   async updateGolfHole(roundId: number, holeNumber: number, updates: UpdateGolfHole): Promise<GolfHole | undefined> {
-    const [updatedHole] = await db
-      .update(golfHoles)
-      .set(updates)
-      .where(eq(golfHoles.roundId, roundId))
-      .returning();
+    const hole = Array.from(this.golfHoles.values())
+      .find(h => h.roundId === roundId && h.holeNumber === holeNumber);
+    
+    if (!hole) return undefined;
+
+    const updatedHole = { ...hole, ...updates };
+    this.golfHoles.set(hole.id, updatedHole);
 
     // Update round totals if score was updated
     if (updates.score !== undefined) {
       await this.updateRoundTotals(roundId);
     }
 
-    return updatedHole || undefined;
+    return updatedHole;
   }
 
   async getGolfHoles(roundId: number): Promise<GolfHole[]> {
-    return await db
-      .select()
-      .from(golfHoles)
-      .where(eq(golfHoles.roundId, roundId))
-      .orderBy(golfHoles.holeNumber);
+    return Array.from(this.golfHoles.values())
+      .filter(hole => hole.roundId === roundId)
+      .sort((a, b) => a.holeNumber - b.holeNumber);
   }
 
   async getUserStats(userId: number): Promise<RoundStats> {
-    const userRounds = await db
-      .select()
-      .from(golfRounds)
-      .where(eq(golfRounds.userId, userId) && eq(golfRounds.isCompleted, true));
+    const userRounds = Array.from(this.golfRounds.values())
+      .filter(round => round.userId === userId && round.isCompleted);
 
     if (userRounds.length === 0) {
       return {
@@ -182,26 +206,22 @@ export class DatabaseStorage implements IStorage {
       };
     }
 
-    const roundIds = userRounds.map(r => r.id);
-    const allHoles = await db
-      .select()
-      .from(golfHoles)
-      .where(inArray(golfHoles.roundId, roundIds));
-
-    const completedHoles = allHoles.filter(hole => hole.score !== null);
+    const allHoles = Array.from(this.golfHoles.values())
+      .filter(hole => userRounds.some(round => round.id === hole.roundId))
+      .filter(hole => hole.score !== null);
 
     const totalScore = userRounds.reduce((sum, round) => sum + (round.totalScore || 0), 0);
     const averageScore = totalScore / userRounds.length;
 
-    const holesWithFIR = completedHoles.filter(hole => hole.fairwayInRegulation !== null);
+    const holesWithFIR = allHoles.filter(hole => hole.fairwayInRegulation !== null);
     const firHits = holesWithFIR.filter(hole => hole.fairwayInRegulation === true).length;
     const firPercentage = holesWithFIR.length > 0 ? (firHits / holesWithFIR.length) * 100 : 0;
 
-    const holesWithGIR = completedHoles.filter(hole => hole.greenInRegulation !== null);
+    const holesWithGIR = allHoles.filter(hole => hole.greenInRegulation !== null);
     const girHits = holesWithGIR.filter(hole => hole.greenInRegulation === true).length;
     const girPercentage = holesWithGIR.length > 0 ? (girHits / holesWithGIR.length) * 100 : 0;
 
-    const holesWithPutts = completedHoles.filter(hole => hole.putts !== null);
+    const holesWithPutts = allHoles.filter(hole => hole.putts !== null);
     const totalPutts = holesWithPutts.reduce((sum, hole) => sum + (hole.putts || 0), 0);
     const averagePutts = holesWithPutts.length > 0 ? totalPutts / holesWithPutts.length : 0;
 
@@ -215,10 +235,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getActiveRound(userId: number): Promise<RoundWithHoles | undefined> {
-    const [activeRound] = await db
-      .select()
-      .from(golfRounds)
-      .where(eq(golfRounds.userId, userId) && eq(golfRounds.isCompleted, false));
+    const activeRound = Array.from(this.golfRounds.values())
+      .find(round => round.userId === userId && !round.isCompleted);
 
     if (!activeRound) return undefined;
 
@@ -227,6 +245,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   private async updateRoundTotals(roundId: number): Promise<void> {
+    const round = this.golfRounds.get(roundId);
+    if (!round) return;
+
     const holes = await this.getGolfHoles(roundId);
     const completedHoles = holes.filter(hole => hole.score !== null);
     
@@ -244,4 +265,4 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+export const storage = new MemStorage();
