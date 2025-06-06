@@ -18,6 +18,15 @@ export default function ScoreInputModal({ hole, onClose, onSave }: ScoreInputMod
   const [greenInRegulation, setGreenInRegulation] = useState(hole.greenInRegulation ?? false);
   const [notes, setNotes] = useState(hole.notes || "");
 
+  // Reset form when hole changes
+  useEffect(() => {
+    setScore(hole.score || hole.par);
+    setPutts(hole.putts || 2);
+    setFairwayInRegulation(hole.fairwayInRegulation ?? false);
+    setGreenInRegulation(hole.greenInRegulation ?? false);
+    setNotes(hole.notes || "");
+  }, [hole.holeNumber, hole.score, hole.putts, hole.fairwayInRegulation, hole.greenInRegulation, hole.notes, hole.par]);
+
   const handleSave = () => {
     onSave({
       score,
@@ -46,6 +55,9 @@ export default function ScoreInputModal({ hole, onClose, onSave }: ScoreInputMod
             <div className="text-center">
               <h2 className="text-xl font-semibold">Hole {hole.holeNumber}</h2>
               <p className="text-green-100 text-sm">Par {hole.par} • {hole.yardage} yards</p>
+              {hole.score !== null && (
+                <p className="text-green-200 text-xs mt-1">Previously scored: {hole.score}</p>
+              )}
             </div>
             <div className="w-10" />
           </div>
@@ -165,7 +177,7 @@ export default function ScoreInputModal({ hole, onClose, onSave }: ScoreInputMod
             onClick={handleSave}
             className="w-full bg-[hsl(var(--golf-green))] text-white py-4 rounded-xl font-semibold text-lg hover:bg-[hsl(var(--golf-green))]/90"
           >
-            Save & Continue
+            {hole.holeNumber < 18 ? `Save & Go to Hole ${hole.holeNumber + 1}` : 'Save & Finish Round'}
           </Button>
 
         </div>
